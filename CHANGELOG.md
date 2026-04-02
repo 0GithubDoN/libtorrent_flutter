@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.7.6
+
+- **Build (Android)**: Enabled encryption — libtorrent is now compiled with `-Dencryption=ON` and statically linked against OpenSSL 3.2.1 cross-compiled for each ABI. Peers can now negotiate encrypted connections (`pe_enabled`/`pe_forced`), dramatically improving peer availability and download speeds in swarms that prefer or require encryption
+- **Build (Android)**: Cross-compiles OpenSSL 3.2.1 as static libraries (`libssl.a`, `libcrypto.a`) for `arm64-v8a`, `armeabi-v7a`, and `x86_64` — no runtime OpenSSL dependency on the device
+- **Build (Android)**: Upgraded compiler optimization from `-O2` to `-O3` with link-time optimization (`-flto`) for faster piece hashing, alert processing, and streaming throughput
+- **Build (Android)**: Removed `-DTORRENT_USE_SSL=0` from the bridge build — encryption settings in C++ (`pe_enabled`/`pe_forced`) are no longer silently ignored
+
 ## 1.7.5
 
 - **FIX**: Added `is_ephemeral` check around the `metadata_received_alert` handler so that only streaming torrents get paused/zeroed after metadata, not regular downloads

@@ -254,12 +254,45 @@ jobs:
           tar xf boost_1_84_0.tar.gz
           echo "BOOST_ROOT=$PWD/boost_1_84_0" >> $GITHUB_ENV
 
-      - name: Build libtorrent for Android (no encryption)
+      - name: Cross-compile OpenSSL for Android
+        env:
+          NDK: ${{ steps.setup-ndk.outputs.ndk-path }}
+        run: |
+          # Map ABI to OpenSSL target
+          case "${{ matrix.abi }}" in
+            arm64-v8a)   OSSL_TARGET="android-arm64" ;;
+            armeabi-v7a) OSSL_TARGET="android-arm" ;;
+            x86_64)      OSSL_TARGET="android-x86_64" ;;
+          esac
+
+          git clone --depth 1 --branch openssl-3.2.1 https://github.com/openssl/openssl.git openssl-src
+          cd openssl-src
+          export ANDROID_NDK_HOME=$NDK
+          export PATH=$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin:$PATH
+          ./Configure $OSSL_TARGET -D__ANDROID_API__=24 \
+            --prefix=$PWD/../openssl-install \
+            no-shared no-tests no-ui-console no-docs
+          make -j$(nproc)
+          make install_sw
+          cd ..
+          echo "OPENSSL_ROOT=$PWD/openssl-install" >> $GITHUB_ENV
+          echo "=== OpenSSL installed ==="
+          ls -la openssl-install/lib*/
+        timeout-minutes: 15
+
+      - name: Build libtorrent for Android (with encryption)
         env:
           NDK: ${{ steps.setup-ndk.outputs.ndk-path }}
         run: |
           git clone --depth 1 --recurse-submodules --branch v2.0.11 https://github.com/arvidn/libtorrent.git libtorrent-src
           cd libtorrent-src
+
+          # Detect OpenSSL lib directory (lib or lib64 depending on ABI)
+          if [ -d "$OPENSSL_ROOT/lib64" ]; then
+            OSSL_LIB_DIR="$OPENSSL_ROOT/lib64"
+          else
+            OSSL_LIB_DIR="$OPENSSL_ROOT/lib"
+          fi
 
           mkdir build && cd build
           cmake .. \
@@ -273,7 +306,11 @@ jobs:
             -DBUILD_SHARED_LIBS=OFF \
             -Dstatic_runtime=ON \
             -Ddeprecated-functions=OFF \
-            -Dencryption=OFF \
+            -Dencryption=ON \
+            -DOPENSSL_ROOT_DIR=$OPENSSL_ROOT \
+            -DOPENSSL_INCLUDE_DIR=$OPENSSL_ROOT/include \
+            -DOPENSSL_CRYPTO_LIBRARY=$OSSL_LIB_DIR/libcrypto.a \
+            -DOPENSSL_SSL_LIBRARY=$OSSL_LIB_DIR/libssl.a \
             -DBOOST_ROOT=$BOOST_ROOT \
             -DBoost_INCLUDE_DIR=$BOOST_ROOT \
             -G Ninja \
@@ -298,26 +335,33 @@ jobs:
             x86_64)      TARGET="x86_64-linux-android24" ;;
           esac
 
+          # Detect OpenSSL lib directory
+          if [ -d "$OPENSSL_ROOT/lib64" ]; then
+            OSSL_LIB_DIR="$OPENSSL_ROOT/lib64"
+          else
+            OSSL_LIB_DIR="$OPENSSL_ROOT/lib"
+          fi
+
           mkdir -p build-bridge && cd build-bridge
 
-          # CRITICAL: Do NOT define TORRENT_USE_OPENSSL at all.
-          # libtorrent's config.hpp uses '#if !defined TORRENT_USE_OPENSSL'
-          # to disable SSL. If we define it (even as 0), config.hpp thinks
-          # OpenSSL is available and tries to #include <openssl/opensslv.h>.
-          # By leaving it undefined, config.hpp correctly sets TORRENT_USE_SSL=0.
+          # Encryption is now ON — link OpenSSL and let libtorrent use it.
+          # Do NOT define TORRENT_USE_OPENSSL or TORRENT_USE_SSL manually;
+          # libtorrent's config.hpp auto-detects via the compiled-in support.
           $NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/clang++ \
             --target=$TARGET \
-            -shared -fPIC -O2 -std=c++17 \
+            -shared -fPIC -O3 -std=c++17 \
+            -flto \
             -DTORRENT_BRIDGE_EXPORTS \
             -DTORRENT_NO_DEPRECATE \
-            -DTORRENT_USE_SSL=0 \
             -DBOOST_NO_IOSTREAM \
             -I$LT_SRC_DIR/include \
             -I$LT_BUILD_DIR/include \
             -I$BOOST_ROOT \
+            -I$OPENSSL_ROOT/include \
             -o liblibtorrent_flutter.so \
             ../src/torrent_bridge.cpp \
             -Wl,--whole-archive $LT_LIB -Wl,--no-whole-archive \
+            $OSSL_LIB_DIR/libssl.a $OSSL_LIB_DIR/libcrypto.a \
             -llog \
             -static-libstdc++
 
