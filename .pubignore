@@ -4,10 +4,22 @@
 prebuilt/ios/
 prebuilt/macos/
 
-# Drop x86_64 Android ABI to stay under pub.dev's 100 MB uncompressed tar limit.
-# arm64-v8a + armeabi-v7a cover all real Android devices.
-# x86_64 = Intel Android emulators only (rare, can build from source).
+# Drop x86_64 and armeabi-v7a Android ABIs to stay under pub.dev's 100 MB limit.
+# arm64-v8a covers all modern Android devices (2017+).
+# x86_64 = Intel emulators only, armeabi-v7a = legacy 32-bit devices.
+# Both can build from source if needed.
 prebuilt/android/x86_64/
+prebuilt/android/armeabi-v7a/
+
+# Windows: libtorrent_flutter.dll is now statically linked (x64-windows-static).
+# These legacy DLLs from the old dynamic build are no longer needed at runtime.
+prebuilt/windows/x64/boost_*.dll
+prebuilt/windows/x64/libcrypto-*.dll
+prebuilt/windows/x64/libssl-*.dll
+prebuilt/windows/x64/torrent-rasterbar.dll
+prebuilt/windows/x64/iconv-*.dll
+prebuilt/windows/x64/charset-*.dll
+prebuilt/windows/x64/legacy.dll
 
 # Legacy iOS static lib (replaced by xcframework)
 ios/liblibtorrent_flutter.a

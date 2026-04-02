@@ -308,6 +308,18 @@ class LibtorrentFlutter {
     _streamsCtrl.add(Map.unmodifiable(_streams));
   }
 
+  /// Notify the engine that the video player has seeked.
+  ///
+  /// Call this from your player's seek callback (e.g. media_kit's
+  /// `player.stream.position` listener when a discontinuity is detected).
+  /// This immediately sets the stream state to [StreamState.seeking] and
+  /// aborts the old HTTP serve loop — bypassing the delay caused by mpv's
+  /// internal demuxer cache (~150 MB by default) which can absorb seeks
+  /// without sending a new HTTP Range request.
+  void notifySeek(int streamId) {
+    _b.streamNotifySeek(_session, streamId);
+  }
+
   /// Stop all streams for a specific torrent.
   void stopAllStreamsForTorrent(int torrentId) {
     final toStop = _streams.entries

@@ -37,7 +37,7 @@ void main() async {
     defaultSavePath:
         '${Directory.current.path}${Platform.pathSeparator}downloads',
     fetchTrackers: true,
-    pollInterval: const Duration(milliseconds: 600),
+    pollInterval: const Duration(milliseconds: 200),
   );
 
   runApp(const LibtorrentExampleApp());

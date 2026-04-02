@@ -170,6 +170,9 @@ TORRENT_API int          lt_get_all_stream_statuses(lt_session_t session,
                                                     lt_stream_status* out,
                                                     int max_count);
 
+/* seek notification — tell the DLL the player seeked (bypasses HTTP detection) */
+TORRENT_API void lt_stream_notify_seek(lt_session_t session, lt_stream_id id);
+
 /* preload — port of torr/preload.go */
 TORRENT_API int  lt_preload_stream(lt_session_t session, lt_stream_id id,
                                    int64_t preload_bytes);

@@ -4,7 +4,7 @@ The only Flutter package wrapping **libtorrent 2.0** — the same C++ engine pow
 
 ```yaml
 dependencies:
-  libtorrent_flutter: ^1.7.6
+  libtorrent_flutter: ^1.7.7
 ```
 
 ---
@@ -202,8 +202,8 @@ When you call `startStream()`:
 2. Critical startup pieces get `set_piece_deadline(0)` triggering libtorrent's time-critical mode, which requests them from multiple peers simultaneously and cancels slow ones. Tail pieces (moov atom) download at lower priority so they never steal bandwidth from the first frame
 3. A tiny HTTP server starts on `127.0.0.1` on a random free port, running its own accept thread
 4. The server responds to byte-range requests, blocking via condition variables until each piece arrives — zero CPU polling. A hot piece cache serves repeated reads instantly without hitting disk
-5. Only the current playback piece + 2 ahead are prioritized — 100% of bandwidth goes to what the player needs right now. Played pieces stay in a trailing retention window (3 pieces) for quick rewinds and player re-reads
-6. On seek, old piece deadlines are cleared immediately, trailing pieces are dropped, and new deadlines are set at the seek target with tight spacing — all bandwidth redirects to the seek position within milliseconds
+5. The current playback piece + 8 ahead are prioritized with staggered deadlines — the immediate piece gets top priority while the pipeline stays full. Played pieces stay in a trailing retention window (3 pieces) for quick rewinds and player re-reads
+6. On seek, all old piece priorities are reset to `dont_download` and the Dart-side `notifySeek()` API instantly signals the engine — bandwidth redirects to the new position within milliseconds, even when the player has a large internal cache
 
 The stream URL works with any player that handles HTTP range requests.
 

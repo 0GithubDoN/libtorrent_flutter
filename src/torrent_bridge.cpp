@@ -52,6 +52,7 @@
   #include <unistd.h>
   #include <fcntl.h>
   #include <signal.h>
+  #include <poll.h>
   typedef int socket_t;
   #define SOCKET_INVALID  (-1)
   #define CLOSESOCKET(s)  ::close(s)
@@ -1225,9 +1226,44 @@ static RangeReq parse_range(const char* buf, int len) {
     return r;
 }
 
-static int send_all(socket_t sock, const char* data, int len) {
+// Check if the peer (player) has closed the connection using non-blocking poll.
+// Returns true if FIN/RST detected (peer closed).
+static bool peer_closed(socket_t sock) {
+#ifdef _WIN32
+    WSAPOLLFD pfd = {};
+    pfd.fd = sock;
+    pfd.events = POLLIN;
+    int r = WSAPoll(&pfd, 1, 0);  // 0ms = instant poll
+    if (r > 0 && (pfd.revents & (POLLIN | POLLHUP | POLLERR))) {
+        // Socket is readable — check if it's FIN (recv returns 0)
+        char tmp;
+        int n = ::recv(sock, &tmp, 1, MSG_PEEK);
+        if (n == 0) return true;   // FIN — peer closed
+        if (n < 0) return true;    // error — treat as closed
+    }
+#else
+    struct pollfd pfd = {};
+    pfd.fd = sock;
+    pfd.events = POLLIN;
+    int r = poll(&pfd, 1, 0);
+    if (r > 0 && (pfd.revents & (POLLIN | POLLHUP | POLLERR))) {
+        char tmp;
+        int n = ::recv(sock, &tmp, 1, MSG_PEEK);
+        if (n == 0) return true;
+        if (n < 0) return true;
+    }
+#endif
+    return false;
+}
+
+static int send_all(socket_t sock, const char* data, int len,
+                    StreamEngine* s = nullptr, int gen = -1) {
     int sent = 0;
     while (sent < len) {
+        // Abort mid-send if a seek happened (new generation)
+        if (s && gen >= 0 && s->seek_generation.load() != gen) return -1;
+        // Detect FIN/RST from player (e.g. mpv closed connection for seek)
+        if (sent > 0 && peer_closed(sock)) return -1;
         int n = ::send(sock, data + sent, len - sent, 0);
         if (n <= 0) return -1;
         sent += n;
@@ -1277,23 +1313,26 @@ static bool serve_range(StreamEngine* s, TorrReader* reader, socket_t cli,
         }
 
         if (!have_it) {
-            // Prioritize this piece and next 2 — that's all.
-            // Like lt2http: set_piece_priority(p, 0, priority{7})
-            // then next pieces with staggered deadlines
-            // Widened from +2 to +5 — more peers active, smoother streaming
-            TB_LOG("serve_range: piece=%d not ready, prioritizing p..p+5", p);
+            // Prioritize current piece at top + upcoming pieces with staggered
+            // priorities and deadlines. Wider window (8 pieces) keeps the
+            // download pipeline full — by the time we finish sending the
+            // current piece, the next several are already downloading.
+            // Deadlines ensure bandwidth focuses on the immediate piece first.
+            TB_LOG("serve_range: piece=%d not ready, prioritizing p..p+8", p);
             try {
                 s->handle.piece_priority(lt::piece_index_t(p), lt::top_priority);
                 s->handle.set_piece_deadline(lt::piece_index_t(p), 0);
             } catch (...) {}
-            for (int i = 1; i <= 5 && p + i <= s->end_piece; ++i) {
+            for (int i = 1; i <= 8 && p + i <= s->end_piece; ++i) {
                 bool have_next = false;
                 { std::lock_guard<std::mutex> lk(s->piece_mu); have_next = s->pieces_have.count(p+i) > 0; }
                 if (!have_next) {
+                    // First 3 at high priority, rest at medium — bandwidth
+                    // focuses on immediate pieces but pipeline stays primed
+                    int pri = (i <= 3) ? 6 : 4;
                     try {
-                        int prio = (i <= 2) ? 7 : 6;
-                        s->handle.piece_priority(lt::piece_index_t(p+i), lt::download_priority_t(prio));
-                        s->handle.set_piece_deadline(lt::piece_index_t(p+i), i * 50);
+                        s->handle.piece_priority(lt::piece_index_t(p+i), lt::download_priority_t(pri));
+                        s->handle.set_piece_deadline(lt::piece_index_t(p+i), i * 500);
                     } catch (...) {}
                 }
             }
@@ -1328,11 +1367,11 @@ static bool serve_range(StreamEngine* s, TorrReader* reader, socket_t cli,
             return false;
         }
 
-        // Pre-request next 3 pieces while we send the current one.
+        // Pre-request next 5 pieces while we send the current one.
         // This pipelines disk I/O with network I/O — by the time we
         // finish sending this piece, the next pieces' data is likely ready.
         if (!is_tail) {
-            for (int pf_i = 1; pf_i <= 3 && p + pf_i <= s->end_piece; ++pf_i) {
+            for (int pf_i = 1; pf_i <= 5 && p + pf_i <= s->end_piece; ++pf_i) {
                 int pf_piece = p + pf_i;
                 bool pf_have = false;
                 { std::lock_guard<std::mutex> lk(s->piece_mu); pf_have = s->pieces_have.count(pf_piece) > 0; }
@@ -1366,7 +1405,7 @@ static bool serve_range(StreamEngine* s, TorrReader* reader, socket_t cli,
         if ((size_t)(off + nb) > rd.size()) nb = (int64_t)rd.size() - off;
         if (nb <= 0) { cursor = send_end + 1; continue; }
 
-        if (send_all(cli, rd.buf() + off, (int)nb) < 0)
+        if (send_all(cli, rd.buf() + off, (int)nb, s, my_gen) < 0)
             return false;
 
         cursor = sbeg + nb;
@@ -1377,7 +1416,10 @@ static bool serve_range(StreamEngine* s, TorrReader* reader, socket_t cli,
             s->read_head.store(cursor);
         }
 
-        if (s->stream_state.load() != LT_STREAM_READY)
+        // Only set READY if we're still the active generation —
+        // prevents overwriting SEEKING set by a newer connection.
+        if (s->seek_generation.load() == my_gen &&
+            s->stream_state.load() != LT_STREAM_READY)
             s->stream_state.store(LT_STREAM_READY);
 
         // Trailing retention — keep last N played pieces for re-reads.
@@ -1433,18 +1475,21 @@ static void handle_connection(StreamEngine* s, socket_t cli, int reader_id) {
 
     int opt = 1;
     ::setsockopt(cli, IPPROTO_TCP, TCP_NODELAY, (const char*)&opt, sizeof(opt));
-    int sndbuf = 8 * 1024 * 1024;  // 8MB — prevents socket stalls on fast networks
+    int sndbuf = 256 * 1024;  // 256KB — small so send() blocks fast on seek
     ::setsockopt(cli, SOL_SOCKET, SO_SNDBUF, (const char*)&sndbuf, sizeof(sndbuf));
 
 #ifdef _WIN32
-    DWORD tv = 36000000;
-    ::setsockopt(cli, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof(tv));
-    ::setsockopt(cli, SOL_SOCKET, SO_SNDTIMEO, (const char*)&tv, sizeof(tv));
+    DWORD rcv_tv = 36000000;  // recv can wait long (keep-alive)
+    DWORD snd_tv = 1000;      // send fails in 1s when player stops reading
+    ::setsockopt(cli, SOL_SOCKET, SO_RCVTIMEO, (const char*)&rcv_tv, sizeof(rcv_tv));
+    ::setsockopt(cli, SOL_SOCKET, SO_SNDTIMEO, (const char*)&snd_tv, sizeof(snd_tv));
 #else
-    struct timeval tv;
-    tv.tv_sec = 36000; tv.tv_usec = 0;
-    ::setsockopt(cli, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
-    ::setsockopt(cli, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+    struct timeval rcv_tv;
+    rcv_tv.tv_sec = 36000; rcv_tv.tv_usec = 0;
+    struct timeval snd_tv;
+    snd_tv.tv_sec = 1; snd_tv.tv_usec = 0;
+    ::setsockopt(cli, SOL_SOCKET, SO_RCVTIMEO, &rcv_tv, sizeof(rcv_tv));
+    ::setsockopt(cli, SOL_SOCKET, SO_SNDTIMEO, &snd_tv, sizeof(snd_tv));
 #endif
 
     while (s->active.load()) {
@@ -2573,6 +2618,52 @@ TORRENT_API void lt_set_upload_limit(lt_session_t session, int bps) {
 
 TORRENT_API const char* lt_last_error(void) { return g_last_error.c_str(); }
 TORRENT_API const char* lt_version(void)    { return LIBTORRENT_VERSION; }
+
+// ── seek notification ────────────────────────────────────────────────────────────
+// Called from the Dart/Flutter layer when the video player reports a seek.
+// This bypasses HTTP-based seek detection entirely — mpv's internal demuxer
+// cache (150MB default) can absorb seeks without sending a new HTTP Range
+// request, making HTTP-only detection unusable for cached seeks.
+
+TORRENT_API void lt_stream_notify_seek(lt_session_t session, lt_stream_id sid) {
+    if (!session) return;
+    auto* sw = to_sw(session);
+    std::lock_guard<std::mutex> lk(sw->streams_mu);
+    auto it = sw->streams.find(sid);
+    if (it == sw->streams.end()) return;
+    auto* s = it->second.get();
+
+    int new_gen = s->seek_generation.fetch_add(1) + 1;
+    TB_LOG("notify_seek: stream=%lld gen=%d", (long long)sid, new_gen);
+    s->stream_state.store(LT_STREAM_SEEKING);
+
+    // Wake old serve_range so it exits on generation mismatch
+    s->piece_cv.notify_all();
+
+    // Free stale read_results
+    {
+        std::lock_guard<std::mutex> rlk(s->read_mu);
+        s->read_results.clear();
+    }
+    s->read_cv.notify_all();
+
+    // Deprioritize ALL pieces except tail (moov atom) so bandwidth
+    // focuses entirely on the new seek position.
+    // serve_range will re-prioritize at the new position.
+    try {
+        auto ti = s->handle.torrent_file();
+        if (ti) {
+            int num_pieces = ti->num_pieces();
+            std::vector<lt::download_priority_t> prios(
+                (size_t)num_pieces, lt::dont_download);
+            // Keep tail pieces for moov atom
+            for (int p = s->tail_start_piece; p <= s->end_piece; ++p)
+                prios[p] = lt::download_priority_t(5);
+            s->handle.prioritize_pieces(prios);
+            TB_LOG("notify_seek: deprioritized all non-tail pieces");
+        }
+    } catch (...) {}
+}
 
 // ── preload — port of torr/preload.go ───────────────────────────────────────────
 

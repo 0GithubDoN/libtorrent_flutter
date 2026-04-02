@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.7.7
+
+- **Seeking**: Added `notifySeek()` API — Dart can now notify the native engine of a seek directly, bypassing HTTP detection entirely. When using players like mpv that buffer heavily (~150 MB demuxer cache), seeks within the cached region never triggered a new HTTP range request, causing 25+ second delays. The engine now responds to seeks within milliseconds regardless of player cache state
+- **Seeking**: Non-blocking FIN/RST detection in the HTTP send loop — uses `WSAPoll`/`poll` + `MSG_PEEK recv` between send iterations to detect when the player closes the connection, enabling faster seek recovery for out-of-cache seeks
+- **Seeking**: On seek, all non-tail piece priorities are reset to `dont_download` — prevents old-position pieces from competing for bandwidth with the new seek target
+- **Streaming**: Widened priority lookahead from current+2 to current+8 pieces with staggered priorities (first 3 at priority 6, rest at priority 4) and wider deadline spacing — keeps the download pipeline full while concentrating bandwidth on the immediate piece
+- **Streaming**: Expanded disk prefetch from 3 to 5 pieces — more pieces are pre-read from storage while the current piece is being sent, reducing I/O stalls between pieces
+
 ## 1.7.6
 
 - **Build (Android)**: Enabled encryption — libtorrent is now compiled with `-Dencryption=ON` and statically linked against OpenSSL 3.2.1 cross-compiled for each ABI. Peers can now negotiate encrypted connections (`pe_enabled`/`pe_forced`), dramatically improving peer availability and download speeds in swarms that prefer or require encryption

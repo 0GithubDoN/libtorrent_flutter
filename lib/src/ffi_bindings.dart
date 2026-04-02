@@ -161,6 +161,12 @@ typedef _GetAllStreamStatusesN = Int32 Function(
 typedef LtGetAllStreamStatuses = int Function(
     Pointer<LtSessionOpaque>, Pointer<LtStreamStatus>, int);
 
+// ── Seek notification ────────────────────────────────────────────────────────
+typedef _StreamNotifySeekN = Void Function(
+    Pointer<LtSessionOpaque>, Int64);
+typedef LtStreamNotifySeek = void Function(
+    Pointer<LtSessionOpaque>, int);
+
 // ─── Preload — port of torr/preload.go ────────────────────────────────────────
 typedef _PreloadStreamN = Int32 Function(
     Pointer<LtSessionOpaque>, Int64, Int64);
@@ -273,6 +279,7 @@ class TorrentBridgeBindings {
   late final LtStopStream         stopStream;
   late final LtGetStreamStatus    getStreamStatus;
   late final LtGetAllStreamStatuses getAllStreamStatuses;
+  late final LtStreamNotifySeek   streamNotifySeek;
   late final LtSetDownloadLimit   setDownloadLimit;
   late final LtSetUploadLimit     setUploadLimit;
   late final LtPreloadStream      preloadStream;
@@ -304,6 +311,7 @@ class TorrentBridgeBindings {
     stopStream          = _lib.lookup<NativeFunction<_StopStreamN>>('lt_stop_stream').asFunction<LtStopStream>();
     getStreamStatus     = _lib.lookup<NativeFunction<_GetStreamStatusN>>('lt_get_stream_status').asFunction<LtGetStreamStatus>();
     getAllStreamStatuses = _lib.lookup<NativeFunction<_GetAllStreamStatusesN>>('lt_get_all_stream_statuses').asFunction<LtGetAllStreamStatuses>();
+    streamNotifySeek    = _lib.lookup<NativeFunction<_StreamNotifySeekN>>('lt_stream_notify_seek').asFunction<LtStreamNotifySeek>();
     setDownloadLimit    = _lib.lookup<NativeFunction<_SetDownloadLimitN>>('lt_set_download_limit').asFunction<LtSetDownloadLimit>();
     setUploadLimit      = _lib.lookup<NativeFunction<_SetUploadLimitN>>('lt_set_upload_limit').asFunction<LtSetUploadLimit>();
     preloadStream       = _lib.lookup<NativeFunction<_PreloadStreamN>>('lt_preload_stream').asFunction<LtPreloadStream>();
