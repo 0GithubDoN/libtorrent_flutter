@@ -269,10 +269,18 @@ jobs:
           cd openssl-src
           export ANDROID_NDK_ROOT=$NDK
           export PATH=$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin:$PATH
+
+          # armeabi-v7a: OpenSSL's 32-bit ARM assembly uses R_ARM_REL32 relocations
+          # against OPENSSL_armcap_P which can't be made PIC. Use no-asm for 32-bit.
+          EXTRA_OPTS=""
+          if [ "${{ matrix.abi }}" = "armeabi-v7a" ]; then
+            EXTRA_OPTS="no-asm"
+          fi
+
           ./Configure $OSSL_TARGET -D__ANDROID_API__=24 \
             --prefix=$PWD/../openssl-install \
             -fPIC \
-            no-shared no-tests no-ui-console no-docs
+            no-shared no-tests no-ui-console no-docs $EXTRA_OPTS
           make -j$(nproc)
           make install_sw
           cd ..
