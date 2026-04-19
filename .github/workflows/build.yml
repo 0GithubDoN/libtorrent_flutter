@@ -489,8 +489,9 @@ jobs:
           # libtorrent's installed config.hpp has TORRENT_USE_OPENSSL/LIBCRYPTO
           # auto-defined; redefining TORRENT_USE_SSL=0 here would create an
           # ABI mismatch and the bridge would silently see encryption=off.
-          # -O3 -flto matches Android 1.7.6+ for fast piece hashing & alerts.
-          clang++ -c -O3 -flto -std=c++17 -fPIC \
+          # -O3 (no -flto: bitcode .o files break `lipo -create` on the
+          # merged static lib with "Unknown header: 0xb17c0de").
+          clang++ -c -O3 -std=c++17 -fPIC \
             -target arm64-apple-ios13.0 \
             -isysroot $IOS_SDK \
             -DTORRENT_BRIDGE_EXPORTS \
@@ -556,7 +557,7 @@ jobs:
           OSSL_ROOT="$GITHUB_WORKSPACE/openssl-install-iossimulator-xcrun-x86_64"
 
           mkdir -p build-ios-sim-x86_64
-          clang++ -c -O3 -flto -std=c++17 -fPIC \
+          clang++ -c -O3 -std=c++17 -fPIC \
             -target x86_64-apple-ios13.0-simulator \
             -isysroot $SIM_SDK \
             -DTORRENT_BRIDGE_EXPORTS \
@@ -617,7 +618,7 @@ jobs:
           OSSL_ROOT="$GITHUB_WORKSPACE/openssl-install-iossimulator-xcrun-arm64"
 
           mkdir -p build-ios-sim-arm64
-          clang++ -c -O3 -flto -std=c++17 -fPIC \
+          clang++ -c -O3 -std=c++17 -fPIC \
             -target arm64-apple-ios13.0-simulator \
             -isysroot $SIM_SDK \
             -DTORRENT_BRIDGE_EXPORTS \
