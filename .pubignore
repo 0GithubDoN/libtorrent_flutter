@@ -1,3 +1,48 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Native binaries are NOT shipped on pub.dev. They live as zipped assets on
+# the matching GitHub Release (v<pubspec.version>) and are downloaded by each
+# platform's build script (Gradle / CMake / CocoaPods) on first build.
+#
+#   https://github.com/ayman708-UX/libtorrent_flutter/releases
+#
+# This keeps the pub.dev tarball well under the 100 MB limit (~200 MB of
+# prebuilt binaries are excluded below).
+# ─────────────────────────────────────────────────────────────────────────────
+
+# All prebuilt native libs (.so / .dll / .dylib / .a / xcframework)
+prebuilt/
+
+# CocoaPods-vendored copies of the same binaries
+ios/libtorrent_flutter.xcframework/
+ios/liblibtorrent_flutter.a
+macos/liblibtorrent_flutter.dylib
+
+# CI and git files
+.github/
+.gitignore
+
+# Build outputs
+build/
+build-*/
+src/build_win/
+android/.gradle/
+android/build/
+**/*.iml
+
+# Example app — only include the Dart source code for pub.dev's Example tab
+example/android/
+example/ios/
+example/linux/
+example/macos/
+example/windows/
+example/build/
+example/.dart_tool/
+example/.idea/
+example/integration_test/
+example/pubspec.lock
+example/*.iml
+example/.flutter-plugins-dependencies
+example/.gitignore
 # Exclude duplicate prebuilt binaries from pub.dev upload.
 # iOS and macOS binaries live in ios/ and macos/ for CocoaPods.
 # Windows/Linux/Android need prebuilt/ because their CMake/Gradle files reference it.

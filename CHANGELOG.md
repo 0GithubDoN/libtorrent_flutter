@@ -1,5 +1,63 @@
 # Changelog
 
+## 1.8.0
+
+- **Coverage**: Three new desktop architecture slices, prebuilt by CI:
+  - **macOS**: the bundled dylib is now a real `universal2` (`arm64 + x86_64`).
+    Previously the `prebuilt/macos/universal/liblibtorrent_flutter.dylib`
+    file was misnamed — it was an arm64-only dylib that would silently fail
+    to load on Intel Macs. Cross-compiled on a single `macos-14` runner
+    (GitHub no longer offers Intel macOS runners) by building OpenSSL +
+    libtorrent + the bridge twice (once per arch) and `lipo -create`-ing the
+    two slices into a fat dylib. `MACOSX_DEPLOYMENT_TARGET` is `10.14`.
+  - **Linux arm64**: covers Raspberry Pi 4/5, AWS Graviton, Asahi Linux, and
+    every other ARM64 Linux box. CI now matrix-builds `linux-native-lib-x64`
+    and `linux-native-lib-arm64` on GitHub's free `ubuntu-22.04-arm` native
+    runner. The Linux CMakeLists picks the slice via
+    `CMAKE_HOST_SYSTEM_PROCESSOR` (`aarch64` → arm64).
+  - **Windows arm64**: covers Snapdragon X laptops and Surface Pro X.
+    Cross-compiled from the `windows-2022` runner via vcpkg's
+    `arm64-windows-static` triplet and `cmake -A ARM64`. The Windows
+    CMakeLists picks the slice via `CMAKE_GENERATOR_PLATFORM` /
+    `PROCESSOR_ARCHITECTURE`.
+- **Release-asset names** changed accordingly:
+  - `linux-native-lib.zip` → `linux-native-lib-x64.zip` + `linux-native-lib-arm64.zip`
+  - `windows-native-lib.zip` → `windows-native-lib-x64.zip` + `windows-native-lib-arm64.zip`
+  - `macos-native-lib.zip` is unchanged (single universal2 dylib inside)
+  - All Android (`android-native-lib-<abi>.zip`) and iOS (`ios-native-lib.zip`)
+    asset names are unchanged.
+- **Removed `prebuilt/macos/universal/` arm64-only dylib** from the repo so
+  that the next build pulls the real universal2 instead of falling back to
+  an Intel-incompatible cached file.
+
+## 1.7.10
+
+- **Packaging**: The pub.dev tarball no longer ships ~200 MB of prebuilt
+  native binaries (it was well over the 100 MB limit). On first build, each
+  platform's build script downloads the matching binary from the GitHub
+  Release for the resolved package version:
+  - **Android** (`android/build.gradle`): downloads `android-native-lib-<abi>.zip`
+    for `arm64-v8a`, `armeabi-v7a`, and `x86_64` into `prebuilt/android/<abi>/`.
+    Pass `-PlibtorrentFlutterAbis=arm64-v8a` to limit which ABIs are fetched,
+    or `-PlibtorrentFlutterSkipDownload=true` to opt out entirely.
+  - **Windows** (`windows/CMakeLists.txt`): downloads `windows-native-lib.zip`
+    into `prebuilt/windows/x64/`. Set `-DLIBTORRENT_FLUTTER_SKIP_DOWNLOAD=ON`
+    to opt out.
+  - **Linux** (`linux/CMakeLists.txt`): downloads `linux-native-lib.zip`
+    into `prebuilt/linux/x64/`. Same `-DLIBTORRENT_FLUTTER_SKIP_DOWNLOAD=ON`
+    opt-out.
+  - **macOS** (`macos/libtorrent_flutter.podspec`): downloads
+    `macos-native-lib.zip` and places `liblibtorrent_flutter.dylib` next to
+    the podspec. Export `LIBTORRENT_FLUTTER_SKIP_DOWNLOAD=1` to opt out.
+  - **iOS** (`ios/libtorrent_flutter.podspec`): downloads `ios-native-lib.zip`
+    and extracts the XCFramework next to the podspec. Same
+    `LIBTORRENT_FLUTTER_SKIP_DOWNLOAD=1` opt-out.
+
+  Each script falls back to building from source if the download fails (or
+  when `-DLIBTORRENT_FLUTTER_SKIP_DOWNLOAD` / the env var is set), so
+  air-gapped builds still work — just drop the binaries into `prebuilt/`
+  yourself, or rely on the source CMake/Gradle paths.
+
 ## 1.7.9
 
 - **iOS encryption** (parity with Android 1.7.6+): The iOS XCFramework is now built with libtorrent's MSE/PE protocol encryption fully enabled. Previously the iOS slices shipped with `-Dencryption=OFF` and `-DTORRENT_USE_SSL=0`, which made `pe_settings.in_enc_policy` / `out_enc_policy` silently no-op. Many seedboxes refuse plaintext connections, so the effective swarm size on iOS was a fraction of what Android saw. With encryption on, iOS connects to the same set of peers Android does — expect noticeably faster initial buffering and more sustained playback bandwidth on tight swarms.

@@ -22,6 +22,39 @@ Pod::Spec.new do |s|
   xcframework_path = 'libtorrent_flutter.xcframework'
   xcframework_absolute = File.join(__dir__, xcframework_path)
 
+  # ───────────────────────────────────────────────────────────────────────
+  # Prebuilt binaries are NOT shipped on pub.dev. Pull the XCFramework from
+  # the matching GitHub Release on first `pod install`. Set the env var
+  # LIBTORRENT_FLUTTER_SKIP_DOWNLOAD=1 to opt out.
+  # ───────────────────────────────────────────────────────────────────────
+  if !File.exist?(xcframework_absolute) && ENV['LIBTORRENT_FLUTTER_SKIP_DOWNLOAD'] != '1'
+    pubspec_path = File.expand_path(File.join(__dir__, '..', 'pubspec.yaml'))
+    if File.exist?(pubspec_path)
+      version_match = File.read(pubspec_path).match(/^version:\s*(\S+)/)
+      if version_match
+        plugin_version = version_match[1]
+        zip_url  = "https://github.com/ayman708-UX/libtorrent_flutter/releases/download/v#{plugin_version}/ios-native-lib.zip"
+        zip_path = File.join(__dir__, '.ios-native-lib.zip')
+        Pod::UI.puts "libtorrent_flutter: downloading prebuilt XCFramework from #{zip_url}"
+        begin
+          require 'open-uri'
+          require 'fileutils'
+          URI.open(zip_url) { |remote| File.binwrite(zip_path, remote.read) }
+          # CI artifact root corresponds to the xcframework directory itself
+          # (Info.plist + ios-arm64/ + ios-arm64_x86_64-simulator/), so we
+          # extract directly into libtorrent_flutter.xcframework/.
+          FileUtils.mkdir_p(xcframework_absolute)
+          system("/usr/bin/unzip -o -q '#{zip_path}' -d '#{xcframework_absolute}'") || raise('unzip failed')
+          File.delete(zip_path) if File.exist?(zip_path)
+        rescue => e
+          Pod::UI.warn "libtorrent_flutter: prebuilt download failed (#{e.message}); falling back to source build"
+          FileUtils.rm_rf(xcframework_absolute) if Dir.exist?(xcframework_absolute) && Dir.empty?(xcframework_absolute)
+          File.delete(zip_path) if File.exist?(zip_path)
+        end
+      end
+    end
+  end
+
   if File.exist?(xcframework_absolute)
     # Use prebuilt XCFramework — supports both device and simulator
     s.vendored_frameworks = xcframework_path

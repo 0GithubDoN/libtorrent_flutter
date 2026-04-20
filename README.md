@@ -1,11 +1,18 @@
 # libtorrent_flutter
 
-The only Flutter package wrapping **libtorrent 2.0** — the same C++ engine powering qBittorrent, Deluge, and Transmission. Add a magnet link, pick a file, get a stream URL. Works on Windows, Linux, macOS, iOS, and Android with zero setup — all native binaries are bundled.
+The only Flutter package wrapping **libtorrent 2.0** — the same C++ engine powering qBittorrent, Deluge, and Transmission. Add a magnet link, pick a file, get a stream URL. Works on Windows, Linux, macOS, iOS, and Android — prebuilt native binaries are fetched on first build from the matching GitHub Release.
 
 ```yaml
 dependencies:
-  libtorrent_flutter: ^1.7.9
+  libtorrent_flutter: ^1.8.0
 ```
+
+> **First build downloads ~10–80 MB of native binaries** from the matching
+> [GitHub Release](https://github.com/ayman708-UX/libtorrent_flutter/releases)
+> (pub.dev's 100 MB tarball limit can't hold the libtorrent + OpenSSL static
+> libs for every platform). The download is wired into Gradle / CMake /
+> CocoaPods and only happens once per package version. See
+> [Offline / air-gapped builds](#offline--air-gapped-builds) below to opt out.
 
 ---
 
@@ -190,6 +197,29 @@ FlutterForegroundTask.startService(
   notificationText: 'Torrent engine running',
 );
 ```
+
+---
+
+## Offline / air-gapped builds
+
+Native binaries are downloaded from the matching
+[GitHub Release](https://github.com/ayman708-UX/libtorrent_flutter/releases)
+on the first build (Gradle / CMake / CocoaPods do this automatically — pub
+itself never runs the download). To opt out:
+
+| Platform | How to skip the download |
+|---|---|
+| Android | `flutter build apk -PlibtorrentFlutterSkipDownload=true` (or set in `gradle.properties`). Limit ABIs with `-PlibtorrentFlutterAbis=arm64-v8a`. |
+| Windows | Pass `-DLIBTORRENT_FLUTTER_SKIP_DOWNLOAD=ON` to CMake (e.g. via `windows/runner/CMakeLists.txt` or `--cmake-args`). |
+| Linux   | Same: `-DLIBTORRENT_FLUTTER_SKIP_DOWNLOAD=ON`. |
+| macOS   | `LIBTORRENT_FLUTTER_SKIP_DOWNLOAD=1 pod install` (run from `macos/`). |
+| iOS     | `LIBTORRENT_FLUTTER_SKIP_DOWNLOAD=1 pod install` (run from `ios/`). |
+
+When you opt out, drop the relevant binaries into the package's `prebuilt/`
+directory yourself (paths match the layout in the GitHub Release zips), or
+let the per-platform CMake/Gradle path build from source — `src/` ships
+with the package and contains everything needed for a from-source build
+given libtorrent + OpenSSL + Boost on the host.
 
 ---
 
