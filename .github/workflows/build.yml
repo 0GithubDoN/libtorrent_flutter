@@ -177,7 +177,7 @@ jobs:
                 -DCMAKE_OSX_SYSROOT=${sdk} \
                 -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
                 -DBUILD_SHARED_LIBS=OFF \
-                -Ddeprecated-functions=ON \
+                -Ddeprecated-functions=OFF \
                 -Dencryption=ON \
                 -DOPENSSL_ROOT_DIR="${ossl_root}" \
                 -DOPENSSL_USE_STATIC_LIBS=ON \
