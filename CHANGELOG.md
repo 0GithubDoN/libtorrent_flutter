@@ -1,5 +1,32 @@
 # Changelog
 
+## 1.8.5
+
+- Metadata-only release to improve pub.dev score (no code changes).
+
+## 1.8.4
+
+- **Live tuning: `configureSession` now propagates to active streams.**
+  Previously, changing `connectionsLimit` (or other cache settings) via
+  `configureSession()` only stored the new config and updated session-wide
+  defaults — already-running streams kept their old per-torrent caps until
+  restarted. The bridge now iterates active streams under the streams lock
+  and re-applies `cache_size`, `reader_read_ahead`, and
+  `torrent_handle::set_max_connections(connectionsLimit)` immediately. Move
+  a slider, get instant peer-count changes mid-playback.
+
+## 1.8.3
+
+- **Fix: per-torrent `connections_limit` was a dead field.** `BtConfig.connectionsLimit`
+  (default 25, TorrServer convention) was only stored in the cache struct
+  and never passed to libtorrent — every torrent inherited the session-wide
+  cap (500), so high-seed torrents would open 200+ connections and suffer
+  head-of-line blocking that made them stream *worse* than low-seed ones.
+  `lt_start_stream` and `lt_set_cache_settings` now call
+  `torrent_handle::set_max_connections(connections_limit)` so the cap
+  actually takes effect. Session-wide default lowered from 500 → 200.
+  Example app gains a live "Connections per torrent" slider (5–200).
+
 ## 1.8.2
 
 - **Streaming: disk-read prefetch.** `serve_range` now kicks off
