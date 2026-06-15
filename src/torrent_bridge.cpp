@@ -23,6 +23,8 @@
 
 #include <libtorrent/session.hpp>
 #include <libtorrent/settings_pack.hpp>
+#include <libtorrent/session_params.hpp>
+#include <libtorrent/posix_disk_io.hpp>
 #include <libtorrent/add_torrent_params.hpp>
 #include <libtorrent/torrent_handle.hpp>
 #include <libtorrent/torrent_info.hpp>
@@ -936,6 +938,16 @@ std::atomic<int32_t> StreamEngine::active_streams{0};
 struct SessionWrapper;
 static void run_http_server(SessionWrapper* sw, StreamEngine* stream);
 
+// Force libtorrent's POSIX disk backend instead of the 2.0 mmap default.
+// On 64-bit Android the mmap backend keeps the growing piece file's pages in
+// the process RSS unbounded → LMK OOM-kills the app mid-movie on low-RAM TVs.
+// POSIX (pread/pwrite) holds RAM flat with negligible streaming-throughput cost.
+static lt::session_params velvio_make_params(lt::settings_pack sp) {
+    lt::session_params params(std::move(sp));
+    params.disk_io_constructor = lt::posix_disk_io_constructor;
+    return params;
+}
+
 // ── session wrapper ─────────────────────────────────────────────────────────────
 struct SessionWrapper {
     lt::session session;
@@ -962,7 +974,8 @@ struct SessionWrapper {
     std::mutex              dart_queue_mu;
     std::deque<AlertRecord> dart_queue;
 
-    explicit SessionWrapper(lt::settings_pack sp) : session(std::move(sp)) {}
+    explicit SessionWrapper(lt::settings_pack sp)
+        : session(velvio_make_params(std::move(sp))) {}
 
     // ── TorrServer config — port of settings.BTSets (session-level defaults) ──
     lt_bt_config bt_config;

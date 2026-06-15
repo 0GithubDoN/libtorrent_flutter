@@ -32,7 +32,7 @@ android {
     // Prebuilt JNI libs: not shipped via pub.dev (too big). Pull them from
     // the matching GitHub Release on first build.
     //
-    //   https://github.com/ayman708-UX/libtorrent_flutter/releases/download/
+    //   https://github.com/0GithubDoN/libtorrent_flutter/releases/download/
     //     v<pubspec.version>/android-native-lib-<abi>.zip
     //
     // Set -PlibtorrentFlutterAbis=arm64-v8a (or comma-separated list) on the
@@ -58,7 +58,7 @@ android {
         if (pluginVersion == null) {
             println "libtorrent_flutter: could not read version from pubspec.yaml; skipping prebuilt download"
         } else {
-            def releaseBase = "https://github.com/ayman708-UX/libtorrent_flutter/releases/download/v${pluginVersion}"
+            def releaseBase = "https://github.com/0GithubDoN/libtorrent_flutter/releases/download/v${pluginVersion}"
             requestedAbis.each { abi ->
                 def soFile = file("${prebuiltDir}/${abi}/liblibtorrent_flutter.so")
                 if (soFile.exists()) return
