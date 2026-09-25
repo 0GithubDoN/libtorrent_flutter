@@ -831,6 +831,87 @@ struct StreamEngine {
     std::deque<int>  trailing_pieces;
     std::mutex       trailing_mu;
 
+    // Hot-cache bookkeeping. Every read_piece_alert copies a whole piece into
+    // RAM (cache buffer + read_results). Without a hard bound, prefetched,
+    // tail and seek-orphaned pieces were never freed and a full movie slowly
+    // accumulated in RAM until the low-memory killer took the app mid-movie.
+    std::mutex    cached_mu;
+    std::set<int> cached_pieces;
+
+    int head_piece() const {
+        return std::clamp(byte_to_piece(read_head.load()), start_piece, end_piece);
+    }
+
+    void release_cached_piece(int p) {
+        if (!cache) return;
+        if (auto* cp = cache->get_piece(p)) {
+            std::unique_lock<std::shared_mutex> lk(cp->mu);
+            cp->buffer.clear();
+            cp->buffer.shrink_to_fit();
+            cp->size = 0;
+            cp->complete = false;
+        }
+    }
+
+    void drop_cached(int p) {
+        {
+            std::lock_guard<std::mutex> lk(cached_mu);
+            cached_pieces.erase(p);
+        }
+        release_cached_piece(p);
+    }
+
+    // Keep at most max(4, capacity / piece_length) pieces in RAM. Evicts the
+    // piece farthest from the playhead, preferring pieces already played.
+    void enforce_cache_budget() {
+        if (!cache || piece_length <= 0) return;
+        const size_t max_pieces = (size_t)std::max<int64_t>(
+            4, cache->capacity / piece_length);
+        std::vector<int> victims;
+        {
+            std::lock_guard<std::mutex> lk(cached_mu);
+            const int head = head_piece();
+            while (cached_pieces.size() > max_pieces) {
+                int victim = -1;
+                int best = -1;
+                for (int p : cached_pieces) {
+                    if (p >= head && p <= head + 2) continue; // about to be served
+                    // behind-the-head distance counts double so played data
+                    // goes first
+                    int d = (p < head) ? (head - p) * 2 : (p - head);
+                    if (d > best) { best = d; victim = p; }
+                }
+                if (victim < 0) break;
+                cached_pieces.erase(victim);
+                victims.push_back(victim);
+            }
+        }
+        for (int v : victims) release_cached_piece(v);
+    }
+
+    // Caller holds read_mu. Never drops [keep] — a reader may be waiting on it.
+    void trim_read_results_locked(int keep) {
+        constexpr size_t MAX_ENTRIES = 8;
+        constexpr size_t MAX_BYTES   = 24u * 1024 * 1024;
+        const int head = head_piece();
+        for (;;) {
+            size_t bytes = 0;
+            for (auto& kv : read_results) bytes += kv.second.data.size();
+            if (read_results.size() <= 2) break;
+            if (read_results.size() <= MAX_ENTRIES && bytes <= MAX_BYTES) break;
+            auto victim = read_results.end();
+            int best = -1;
+            for (auto it = read_results.begin(); it != read_results.end(); ++it) {
+                int p = it->first;
+                if (p == keep) continue;
+                int d = (p < head) ? (head - p) * 2 : (p - head);
+                if (d > best) { best = d; victim = it; }
+            }
+            if (victim == read_results.end()) break;
+            read_results.erase(victim);
+        }
+    }
+
     // adaptive bitrate estimate (bytes/sec) — derived from file size
     float estimated_bitrate_bps = 625000.0f;
     int   critical_startup_pieces = 2;  // computed at init
@@ -893,6 +974,7 @@ struct StreamEngine {
                 r.ok = true;
             }
             read_results[p] = std::move(r);
+            trim_read_results_locked(p);
         }
 
         // Populate hot piece cache — instant re-reads for player probes,
@@ -907,6 +989,13 @@ struct StreamEngine {
                     cp->complete = true;
                     cp->accessed = TorrReader::now_unix();
                 }
+            }
+            if (cp) {
+                {
+                    std::lock_guard<std::mutex> lk(cached_mu);
+                    cached_pieces.insert(p);
+                }
+                enforce_cache_budget();
             }
         }
 
@@ -1157,6 +1246,11 @@ static ReadResult read_piece_data(StreamEngine* s, int piece,
                 ReadResult r;
                 r.data.assign(cp->buffer.begin(), cp->buffer.end());
                 r.ok = true;
+                lk.unlock();
+                // The prefetch put a second copy in read_results — without
+                // this erase it lived until the next seek (i.e. forever).
+                std::lock_guard<std::mutex> rlk(s->read_mu);
+                s->read_results.erase(piece);
                 return r;
             }
         }
@@ -1189,6 +1283,18 @@ static ReadResult read_piece_data(StreamEngine* s, int piece,
             ReadResult r = std::move(it->second);
             s->read_results.erase(it);
             return r;
+        }
+    }
+    lk.unlock();
+    if (s->cache) {
+        if (auto* cp = s->cache->get_piece(piece)) {
+            std::shared_lock<std::shared_mutex> clk(cp->mu);
+            if (!cp->buffer.empty() && cp->complete) {
+                ReadResult r;
+                r.data.assign(cp->buffer.begin(), cp->buffer.end());
+                r.ok = true;
+                return r;
+            }
         }
     }
     return {};
@@ -1400,16 +1506,10 @@ static bool serve_range(StreamEngine* s, TorrReader* reader, socket_t cli,
                 try {
                     s->handle.piece_priority(lt::piece_index_t(old_p), lt::dont_download);
                 } catch (...) {}
-                // Release cache memory for evicted piece
-                if (s->cache) {
-                    auto* cp = s->cache->get_piece(old_p);
-                    if (cp) {
-                        std::unique_lock<std::shared_mutex> clk(cp->mu);
-                        cp->buffer.clear();
-                        cp->buffer.shrink_to_fit();
-                        cp->size = 0;
-                        cp->complete = false;
-                    }
+                s->drop_cached(old_p);
+                {
+                    std::lock_guard<std::mutex> rlk(s->read_mu);
+                    s->read_results.erase(old_p);
                 }
             }
         }
@@ -1552,6 +1652,7 @@ static void handle_connection(StreamEngine* s, socket_t cli, int reader_id) {
                             s->handle.piece_priority(
                                 lt::piece_index_t(old_p), lt::dont_download);
                         } catch (...) {}
+                        s->drop_cached(old_p);
                     }
                     s->trailing_pieces.clear();
                 }
