@@ -302,6 +302,9 @@ jobs:
       - name: Setup vcpkg
         run: |
           git clone https://github.com/microsoft/vcpkg.git C:\vcpkg
+          # Pinned to the last commit before vcpkg moved libtorrent to 2.1.x
+          # (API-incompatible with the bridge, which targets 2.0.11).
+          git -C C:cpkg checkout aae277acf4e7de287ddb5e208b5316614de6aad7
           C:\vcpkg\bootstrap-vcpkg.bat
           echo "VCPKG_ROOT=C:\vcpkg" >> $env:GITHUB_ENV
 
