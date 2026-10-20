@@ -1,5 +1,30 @@
 # Changelog
 
+## 1.8.7
+
+- **Fix: streams froze when the download got ahead of playback.** Once
+  every wanted piece was on disk the torrent counted as finished, and with
+  `close_redundant_connections` on the session dropped every seed and told
+  the remaining peers it was upload-only (so seeds dropped it too). The next
+  pieces then waited on reconnects. The setting is now off.
+- **Sliding download window.** Pieces were only requested when the HTTP
+  server hit a missing one, so downloading stopped after each batch and
+  restarted only once playback had caught up. The window now follows the
+  read cursor: ~60 s of video ahead (32–192 MB), the nearest ~20 s with
+  deadlines spaced by playback time, the rest on a falling priority. A seek
+  drops the old window so bandwidth goes to the new position.
+- **Stream-only torrents are no longer paused at metadata.** Pausing dropped
+  every peer right before the stream started. File priorities are zeroed
+  instead, so warm-up torrents stay connected and start faster.
+- **Zero-copy piece reads.** The read cache and pending reads share
+  libtorrent's piece buffer instead of copying each piece up to three times
+  (up to 48 MB of memcpy per 16 MB piece, done on the alert thread).
+- Peer timeouts relaxed (60 s / 120 s) so a full player buffer or a pause
+  doesn't drop the swarm.
+- Fix: per-connection readers were never closed (a shadowed variable).
+- Debug logging is off unless `TB_LOG_FILE` is set; it used to `fopen()` a
+  hard-coded path on every log line.
+
 ## 1.8.5
 
 - Metadata-only release to improve pub.dev score (no code changes).
